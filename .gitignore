@@ -1,0 +1,18 @@
+# Build artifacts
+/target
+Cargo.lock
+
+# GLiNER models (large files)
+/models/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+.agent/
