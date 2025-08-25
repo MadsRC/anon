@@ -7,7 +7,7 @@ A high-performance, safe anonymization library for data privacy protection, comb
 - 🤖 **Advanced Entity Detection**: GLiNER ML models + regex patterns
 - 🎭 **Smart Anonymization**: Pseudonymization, generalization, suppression, redaction
 - ⚡ **High Performance**: Rust-powered with GPU acceleration support
-- 🛡️ **Privacy-First**: K-anonymity, differential privacy, format preservation
+- 🛡️ **Privacy-First**: Format preservation, with K-anonymity and differential privacy planned
 - 🔧 **Easy Integration**: Simple APIs with comprehensive examples
 
 ## 🚀 Quick Start
@@ -19,10 +19,10 @@ Get up and running in 3 commands:
 make install
 
 # 2. Run pattern-based demo
-make demo
+make demo-patterns
 
 # 3. Run ML-powered demo  
-make demo-ner
+make demo-gliner
 ```
 
 ### What You'll See
@@ -141,6 +141,7 @@ Our Makefile provides comprehensive automation:
 make download-models           # Download all GLiNER models  
 make download-gliner_small-v2.1 # Download GLiNER small v2.1 model
 make download-gliner-x-small   # Download GLiNER x-small model
+make compare-models            # Run comprehensive model comparison
 
 # 🚀 Development  
 make build          # Build project
@@ -150,13 +151,18 @@ make lint           # Run clippy linter
 make format         # Format code
 
 # 📚 Examples & Demos
-make demo           # Pattern-based demo
-make demo-ner       # GLiNER ML demo
+make examples       # Run all examples
+make demo-patterns  # Pattern-based demo
+make demo-gliner    # GLiNER ML demo
 make benchmark      # Performance tests
 
 # 🧹 Cleanup
 make clean          # Clean build artifacts
-make clean-all      # Clean everything
+
+# 🔧 Utilities
+make help           # Show all available commands
+make install        # Install dependencies + build
+make all            # Run full CI pipeline (build + test + lint)
 ```
 
 ## 🏗️ Architecture
@@ -169,9 +175,7 @@ anon/
 │   │   ├── ner.rs           # GLiNER ML detection
 │   │   └── hybrid.rs        # Hybrid detection
 │   ├── algorithms/          # Anonymization strategies
-│   │   ├── k_anonymity.rs   # K-anonymity
-│   │   ├── differential_privacy.rs
-│   │   ├── entity_anonymization.rs
+│   │   ├── entity_anonymization.rs # Main anonymization logic
 │   │   ├── generalization.rs
 │   │   └── suppression.rs
 │   ├── evaluation/          # Model evaluation framework
@@ -252,8 +256,8 @@ make benchmark
 
 Check out comprehensive examples in the [`examples/`](examples/) directory:
 
-- **`ner_demo.rs`**: Pattern-based detection and anonymization
-- **`gliner_demo.rs`**: ML-powered entity recognition  
+- **`patterns_demo.rs`**: Pattern-based detection and anonymization
+- **`gliner_demo.rs`**: ML-powered entity recognition with GLiNER
 - **`model_setup.md`**: Detailed model setup guide
 
 ## 🤝 Contributing

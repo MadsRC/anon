@@ -24,7 +24,7 @@ This document describes the **conceptual framework** and **system design** of th
 ### 4. **Layered Privacy Controls**
 - Multiple anonymization strategies per entity type
 - Configurable privacy levels and confidence thresholds
-- Formal privacy guarantees (k-anonymity, differential privacy)
+- Format preservation and pseudonymization (k-anonymity, differential privacy planned)
 
 ## System Architecture
 
@@ -86,9 +86,10 @@ pub struct DetectedEntity {
 | **Pseudonymize** | Realistic fake generation | `John Smith` → `Alex Williams` |
 
 **Privacy Algorithms**
-- **K-Anonymity**: Ensures k identical records for quasi-identifiers
-- **Differential Privacy**: Adds calibrated noise for statistical privacy
-- **Format Preservation**: Maintains structural characteristics
+- **Format Preservation**: Maintains structural characteristics (implemented)
+- **Pseudonymization**: Deterministic fake data generation (implemented)
+- **K-Anonymity**: Ensures k identical records for quasi-identifiers (planned)
+- **Differential Privacy**: Adds calibrated noise for statistical privacy (planned)
 
 ### Layer 4: Transformation Registry *(Future Enhancement)*
 

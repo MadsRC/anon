@@ -1,27 +1,39 @@
-use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, ReplacementStrategy};
+use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, ReplacementStrategy, PseudonymPools};
 use anon_sdk::detection::{EntityDetector, EntityType, ner::GlinerDetector};
+use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🤖 GLiNER NER Integration Demo\n");
 
-    // Note: You would need to download GLiNER models from Hugging Face
-    // Example models:
-    // - gliner-small-2.1 (span mode)
-    // - gliner-multitask-large-0.5 (token mode)
+    // Try local models/ directory first, then fallback to $HOME/.anon/models/
+    let local_base = "models/gliner/gliner-x-small";
+    let home_base = format!("{}/.anon/models/gliner/gliner-x-small", 
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
 
-    let tokenizer_path = "models/gliner/gliner_small-v2.1/tokenizer.json";
-    let model_path = "models/gliner/gliner_small-v2.1/model.onnx";
+    let (tokenizer_path, model_path) = if Path::new(&format!("{}/tokenizer.json", local_base)).exists() 
+        && Path::new(&format!("{}/model.onnx", local_base)).exists() {
+        println!("📍 Using local models from: {}", local_base);
+        (format!("{}/tokenizer.json", local_base), format!("{}/model.onnx", local_base))
+    } else if Path::new(&format!("{}/tokenizer.json", home_base)).exists() 
+        && Path::new(&format!("{}/model.onnx", home_base)).exists() {
+        println!("📍 Using models from: {}", home_base);
+        (format!("{}/tokenizer.json", home_base), format!("{}/model.onnx", home_base))
+    } else {
+        return Err("❌ GLiNER models not found. Please run:\n  make download-models\n  mkdir -p $HOME/.anon && cp -r models $HOME/.anon/".into());
+    };
 
     let entity_types = vec![
         EntityType::Person,
         EntityType::Location,
         EntityType::Organization,
+        EntityType::Email,
+        EntityType::PhoneNumber,
         EntityType::Custom("product".to_string()),
         EntityType::Custom("event".to_string()),
     ];
 
     println!("🔧 Loading GLiNER model...");
-    let mut detector = GlinerDetector::new(tokenizer_path, model_path, entity_types)?
+    let mut detector = GlinerDetector::new(&tokenizer_path, &model_path, entity_types)?
         .with_confidence_threshold(0.7)?;
 
     let sample_text = r#"
@@ -48,10 +60,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n🎭 Applying anonymization...");
-    let mut anonymizer = EntityAnonymization::new();
+    // Generate pseudonym pools for demonstration
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer = EntityAnonymization::new().with_pools(pools);
 
     // Configure different strategies for different entity types
     anonymizer.add_replacement_strategy(EntityType::Person, ReplacementStrategy::Pseudonymize);
+    anonymizer.add_replacement_strategy(EntityType::Email, ReplacementStrategy::Pseudonymize);
+    anonymizer.add_replacement_strategy(EntityType::PhoneNumber, ReplacementStrategy::Pseudonymize);
     anonymizer.add_replacement_strategy(
         EntityType::Location,
         ReplacementStrategy::Generalize("LOCATION".to_string()),

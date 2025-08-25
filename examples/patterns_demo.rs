@@ -2,7 +2,7 @@ use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, Replacemen
 use anon_sdk::detection::{EntityDetector, EntityType, patterns::PatternDetector};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔒 Anonymization SDK - NER Integration Demo\n");
+    println!("🔒 Anonymization SDK - Pattern-Based Demo\n");
 
     // Create pattern-based detector (works without external dependencies)
     let mut detector = PatternDetector::new()?;
@@ -82,8 +82,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n✅ Demo completed successfully!");
-    println!("\n💡 Note: To enable advanced NER with gline-rs, use --features ner");
-    println!("   This would allow detection of entities like person names and locations.");
 
     Ok(())
 }

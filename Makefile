@@ -16,8 +16,8 @@ help:
 	@echo ""
 	@echo "📚 Examples & Benchmarks:"
 	@echo "  make examples     - Run all examples"
-	@echo "  make demo         - Run pattern-based demo"
-	@echo "  make demo-ner     - Run GLiNER demo (requires models)"
+	@echo "  make demo-patterns - Run pattern-based demo"
+	@echo "  make demo-gliner  - Run GLiNER demo (requires models)"
 	@echo "  make benchmark    - Run performance benchmarks"
 	@echo ""
 	@echo "🤖 Model Management:"
@@ -28,7 +28,6 @@ help:
 	@echo ""
 	@echo "🧹 Cleanup:"
 	@echo "  make clean        - Clean build artifacts"
-	@echo "  make clean-all    - Clean everything (artifacts)"
 	@echo ""
 	@echo "⚡ Quick Start:"
 	@echo "  make install      - Install dependencies + build"
@@ -62,13 +61,13 @@ format:
 	@echo "✅ Code formatted"
 
 # Examples
-examples: demo demo-ner
+examples: demo-patterns demo-gliner
 
-demo:
+demo-patterns:
 	@echo "🎯 Running pattern-based anonymization demo..."
-	@cargo run --example ner_demo
+	@cargo run --example patterns_demo
 
-demo-ner:
+demo-gliner:
 	@echo "🤖 Running GLiNER ML demo..."
 	@cargo run --example gliner_demo
 
@@ -86,7 +85,9 @@ install: build
 	@echo "🚀 Next steps:"
 	@echo "  1. Download models: make download-models"
 	@echo "  2. Setup models: mkdir -p $$HOME/.anon && cp -r models $$HOME/.anon/"
-	@echo "  3. Test CLI: echo 'Hi John' | ./target/release/anon --model-path $$HOME/.anon/models/gliner/gliner-x-small"
+	@echo "  3. Test pattern demo: make demo-patterns"
+	@echo "  4. Test GLiNER demo: make demo-gliner"
+	@echo "  5. Test CLI: echo 'Hi John' | ./target/release/anon --model-path $$HOME/.anon/models/gliner/gliner-x-small"
 
 # Cleanup
 clean:
@@ -94,8 +95,6 @@ clean:
 	@cargo clean
 	@echo "✅ Build artifacts cleaned"
 
-clean-all: clean
-	@echo "✅ Everything cleaned"
 
 # CI Pipeline
 all: check lint test build
@@ -151,4 +150,4 @@ compare-models: download-models
 # Development workflow
 dev:
 	@echo "🛠️  Development setup complete"
-	@echo "Ready for: make demo-ner"
+	@echo "Ready for: make demo-patterns or make demo-gliner"
