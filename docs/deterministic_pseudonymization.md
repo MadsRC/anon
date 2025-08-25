@@ -4,10 +4,11 @@ This document explains how the anonymization SDK implements deterministic pseudo
 
 ## Overview
 
-The SDK provides two modes of deterministic behavior:
+The SDK provides deterministic pseudonymization through multiple mechanisms:
 
-1. **Text-based determinism** (always active)
-2. **Seed-based determinism** (when `--seed` is provided)
+1. **Hash-based determinism** (always active) - Same text + entity type produces same pseudonym
+2. **Persistent seed management** (CLI automatic) - Ensures consistency across CLI invocations  
+3. **Explicit seed control** (when `--seed` is provided) - User-controlled determinism
 
 ## How Determinism Works
 
@@ -17,7 +18,8 @@ Pseudonyms are generated using a deterministic approach based on cryptographic h
 
 ```rust
 // Create hash from multiple inputs
-let mut hasher = DefaultHasher::new();
+let mut hasher = std::collections::hash_map::DefaultHasher::new();
+use std::hash::{Hash, Hasher};
 
 // Optional: Include user-provided seed
 if let Some(seed) = self.seed {
@@ -35,21 +37,32 @@ let mut rng = StdRng::seed_from_u64(deterministic_seed);
 
 ### Behavior Without Explicit Seed
 
-**⚠️ Important**: Even without providing a `--seed` parameter, pseudonymization is still deterministic.
+**⚠️ Important**: Even without providing a `--seed` parameter, pseudonymization is still deterministic through persistent seed management.
 
-- `"John Smith"` will **always** become the same pseudonym (e.g., "Alex Miller")
+- When no `--seed` is provided, the CLI automatically generates and persists a seed
+- `"John Smith"` will **always** become the same pseudonym (e.g., "Alex Miller") within the same persistent session
 - `"Jane Doe"` will **always** become a different but consistent pseudonym (e.g., "Taylor Davis")
-- This is because the hash is computed from the original text itself
+- This is because the hash is computed from the persistent seed + original text + entity type
 
 **Example:**
 ```bash
-# Both calls produce identical output
+# First call generates and persists seed automatically
 echo "Contact John Smith" | anon
-# → "Contact Alex Miller"
+# → "Contact Alex Miller" (persistent seed: 12345678901234567890)
 
+# Second call uses same persistent seed
 echo "Contact John Smith" | anon  
-# → "Contact Alex Miller" (same result)
+# → "Contact Alex Miller" (same result with same persistent seed)
 ```
+
+### Persistent Seed Management
+
+The CLI automatically manages seeds to ensure consistency across invocations:
+
+- **Persistent seed file**: Stored in `~/.anon/seed` 
+- **Automatic generation**: Created on first use if no explicit seed provided
+- **Explicit override**: `--seed` parameter overrides persistent seed for that invocation
+- **Consistency guarantee**: Same operations produce identical results across separate CLI calls
 
 ### Behavior With Explicit Seed
 
@@ -129,7 +142,7 @@ let original_text = anonymizer.reverse_pseudonymization(&anonymized_text)?;
 
 ### CLI Usage for Reversibility
 
-Currently, reversibility is only available programmatically. The CLI doesn't persist or load mappings between invocations.
+Reversibility is available programmatically through the SDK. While the CLI doesn't persist pseudonym mappings between invocations, it does maintain persistent seeds to ensure consistency across separate CLI calls, enabling deterministic re-generation of the same pseudonyms.
 
 ## Use Cases
 
@@ -170,7 +183,7 @@ Currently, reversibility is only available programmatically. The CLI doesn't per
 
 ### Entity Type Separation
 
-Different entity types with same text get different pseudonyms:
+Different entity types with same text get different pseudonyms due to entity type being included in the hash:
 
 ```bash
 # If "Smith" appears as both person surname and organization
@@ -179,16 +192,41 @@ echo "John Smith works at Smith Corp" | anon --seed 42
 #    ^person         ^organization (different pseudonyms)
 ```
 
+This separation is achieved by including the `entity.entity_type` in the deterministic hash calculation, ensuring the same text produces different pseudonyms when detected as different entity types.
+
+### Pseudonym Pool Generation
+
+The system generates realistic pseudonym pools using algorithmic methods:
+
+```rust
+// Pools are generated with configurable size (default: 10,000)
+let pools = PseudonymPools::generate_with_seed(seed, pool_size);
+
+// Generated pools include:
+// - first_names: Algorithmically generated realistic first names
+// - last_names: Algorithmically generated realistic last names  
+// - organizations: Generated company names with prefixes/suffixes
+// - locations: Generated city/place names
+// - email_domains: Generated domains for email pseudonyms
+```
+
+**Pool Management Commands:**
+- `anon generate-pools --size 10000 --seed 42` - Generate new pools
+- `anon show-pools` - Display pool information and metadata
+- `anon export-pools output.json` - Export current pools
+- `anon import-pools input.json --set-default` - Import external pools
+
 ### Current Limitations
 
-- **Fixed pools**: Names selected from hardcoded lists (~10 options per category)
-- **Collision potential**: Limited pool size may cause collisions with large datasets
-- **No persistence**: Mappings lost between CLI invocations
-- **No key derivation**: Seeds used directly without additional security layers
+- **Configurable pools**: Names selected from generated pools (default 10,000 pseudonyms per category, configurable)
+- **Collision potential**: With large datasets, pool exhaustion may cause repeated pseudonyms
+- **No mapping persistence**: Pseudonym mappings lost between CLI invocations (but seeds are persisted for consistency)
+- **Direct seed usage**: Seeds used directly in hash function without additional key derivation layers
 
 ## Future Considerations
 
-- Larger pseudonym pools or algorithmic generation
+- Even larger pseudonym pools or enhanced algorithmic generation
 - Persistent mapping storage with encryption
 - Key derivation functions for enhanced security
 - Configurable determinism levels (strict/relaxed)
+- Optional mapping persistence across CLI invocations

@@ -13,6 +13,7 @@ help:
 	@echo "  make check        - Check code compilation"
 	@echo "  make lint         - Run clippy linter"
 	@echo "  make format       - Format code with rustfmt"
+	@echo "  make rustup       - Install the rust toolchain"
 	@echo ""
 	@echo "📚 Examples & Benchmarks:"
 	@echo "  make examples     - Run all examples"
@@ -58,6 +59,11 @@ lint:
 format:
 	@echo "✨ Formatting code..."
 	@cargo fmt
+	@echo "✅ Code formatted"
+
+rustup:
+	@echo "✨ Installing rust toolchain..."
+	@curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 	@echo "✅ Code formatted"
 
 # Examples

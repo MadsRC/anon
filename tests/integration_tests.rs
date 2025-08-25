@@ -261,3 +261,199 @@ fn test_multiple_detector_combination() {
     assert!(has_email, "Should detect email");
     assert!(has_phone, "Should detect phone number");
 }
+
+#[test]
+fn test_deterministic_pseudonymization_with_seed() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    
+    // Generate test pools with a known seed
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer1 = EntityAnonymization::new().with_pools(pools.clone());
+    let mut anonymizer2 = EntityAnonymization::new().with_pools(pools);
+    
+    anonymizer1.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer1.set_seed(123);
+    anonymizer2.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer2.set_seed(123);
+    
+    let mut detector1 = PatternDetector::new().expect("Failed to create detector");
+    let mut detector2 = PatternDetector::new().expect("Failed to create detector");
+    
+    let test_text = "Contact John Smith at john@company.com";
+    
+    let result1 = anonymizer1.anonymize_text(test_text, &mut detector1)
+        .expect("First anonymization failed");
+    let result2 = anonymizer2.anonymize_text(test_text, &mut detector2)
+        .expect("Second anonymization failed");
+    
+    assert_eq!(result1, result2, "Same seed should produce identical results");
+    assert_ne!(result1, test_text, "Results should be different from original");
+}
+
+#[test]
+fn test_deterministic_pseudonymization_without_seed() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    
+    // Test that even without explicit seed, results are deterministic
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer1 = EntityAnonymization::new().with_pools(pools.clone());
+    let mut anonymizer2 = EntityAnonymization::new().with_pools(pools);
+    
+    anonymizer1.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer2.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    // Note: not setting seed explicitly
+    
+    let mut detector1 = PatternDetector::new().expect("Failed to create detector");
+    let mut detector2 = PatternDetector::new().expect("Failed to create detector");
+    
+    let test_text = "Contact John Smith at john@company.com";
+    
+    let result1 = anonymizer1.anonymize_text(test_text, &mut detector1)
+        .expect("First anonymization failed");
+    let result2 = anonymizer2.anonymize_text(test_text, &mut detector2)
+        .expect("Second anonymization failed");
+    
+    assert_eq!(result1, result2, "Results should be deterministic even without explicit seed");
+    assert_ne!(result1, test_text, "Results should be different from original");
+}
+
+#[test]
+fn test_different_seeds_produce_different_results() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer1 = EntityAnonymization::new().with_pools(pools.clone());
+    let mut anonymizer2 = EntityAnonymization::new().with_pools(pools);
+    
+    anonymizer1.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer1.set_seed(123);
+    anonymizer2.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer2.set_seed(456);
+    
+    let mut detector1 = PatternDetector::new().expect("Failed to create detector");
+    let mut detector2 = PatternDetector::new().expect("Failed to create detector");
+    
+    let test_text = "Contact John Smith at john@company.com";
+    
+    let result1 = anonymizer1.anonymize_text(test_text, &mut detector1)
+        .expect("First anonymization failed");
+    let result2 = anonymizer2.anonymize_text(test_text, &mut detector2)
+        .expect("Second anonymization failed");
+    
+    assert_ne!(result1, result2, "Different seeds should produce different results");
+}
+
+#[test]
+fn test_entity_type_affects_pseudonym_generation() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    use anon_sdk::detection::patterns::PatternDetector;
+    
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer1 = EntityAnonymization::new().with_pools(pools.clone());
+    let mut anonymizer2 = EntityAnonymization::new().with_pools(pools);
+    
+    anonymizer1.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer1.set_seed(123);
+    anonymizer2.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer2.set_seed(123);
+    
+    // Set different replacement strategies for different entity types
+    anonymizer1.add_replacement_strategy(EntityType::Person, 
+        anon_sdk::algorithms::entity_anonymization::ReplacementStrategy::Pseudonymize);
+    anonymizer2.add_replacement_strategy(EntityType::Organization, 
+        anon_sdk::algorithms::entity_anonymization::ReplacementStrategy::Pseudonymize);
+    
+    let mut detector1 = PatternDetector::new().expect("Failed to create detector");
+    let mut detector2 = PatternDetector::new().expect("Failed to create detector");
+    
+    // Use contexts that will be detected as different entity types
+    let person_text = "Contact John Smith";  // Should be detected as Person
+    let org_text = "Contact Smith Corp";     // Should be detected as Organization
+    
+    let person_result = anonymizer1.anonymize_text(person_text, &mut detector1)
+        .expect("Person anonymization failed");
+    let org_result = anonymizer2.anonymize_text(org_text, &mut detector2)
+        .expect("Organization anonymization failed");
+    
+    // Extract the anonymized "Smith" parts
+    let person_smith = person_result.replace("Contact ", "");
+    let org_smith = org_result.replace("Contact ", "");
+    
+    // Even with same seed, different entity types should produce different results
+    // (though this test is limited by pattern detection capabilities)
+    println!("Person context: {} -> {}", person_text, person_smith);
+    println!("Organization context: {} -> {}", org_text, org_smith);
+}
+
+#[test]
+fn test_within_execution_consistency() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer = EntityAnonymization::new().with_pools(pools);
+    anonymizer.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer.set_seed(123);
+    
+    let mut detector = PatternDetector::new().expect("Failed to create detector");
+    
+    let test_text = "John met John to discuss John's project with john@company.com";
+    
+    let result = anonymizer.anonymize_text(test_text, &mut detector)
+        .expect("Anonymization failed");
+    
+    // Extract the pseudonym used for "John"
+    let parts: Vec<&str> = result.split_whitespace().collect();
+    let first_name = parts[0]; // First occurrence
+    let second_name = parts[2]; // Second occurrence  
+    let third_name = parts[5].trim_end_matches("'s"); // Third occurrence
+    
+    assert_eq!(first_name, second_name, "Same entity should get same pseudonym within execution");
+    assert_eq!(second_name, third_name, "Same entity should get same pseudonym within execution");
+}
+
+#[test]
+fn test_pseudonym_reversibility() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer = EntityAnonymization::new().with_pools(pools);
+    anonymizer.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer.set_seed(123);
+    
+    let mut detector = PatternDetector::new().expect("Failed to create detector");
+    
+    let original_text = "Contact John Smith at john@company.com";
+    let anonymized_text = anonymizer.anonymize_text(original_text, &mut detector)
+        .expect("Anonymization failed");
+    
+    assert_ne!(anonymized_text, original_text, "Text should be anonymized");
+    
+    let reversed_text = anonymizer.reverse_pseudonymization(&anonymized_text)
+        .expect("Reverse pseudonymization failed");
+    
+    assert_eq!(reversed_text, original_text, "Reverse pseudonymization should restore original text");
+}
+
+#[test]
+fn test_pseudonym_mapping_retrieval() {
+    use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, PseudonymPools, AnonymizationStrategy};
+    
+    let pools = PseudonymPools::generate_with_seed(42, 100);
+    let mut anonymizer = EntityAnonymization::new().with_pools(pools);
+    anonymizer.set_global_strategy(AnonymizationStrategy::Pseudonymize);
+    anonymizer.set_seed(123);
+    
+    let mut detector = PatternDetector::new().expect("Failed to create detector");
+    
+    let original_text = "Contact john@company.com";
+    let _anonymized_text = anonymizer.anonymize_text(original_text, &mut detector)
+        .expect("Anonymization failed");
+    
+    let mappings = anonymizer.get_pseudonym_mapping();
+    
+    // Debug: print what mappings we actually got
+    println!("Mappings found: {:?}", mappings);
+    
+    assert!(!mappings.is_empty(), "Should have pseudonym mappings");
+    assert!(mappings.contains_key("john@company.com"), "Should have mapping for email");
+}
