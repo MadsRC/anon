@@ -54,6 +54,12 @@ pub struct ConfidenceAnalyzer {
     thresholds: Vec<f32>,
 }
 
+impl Default for ConfidenceAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfidenceAnalyzer {
     pub fn new() -> Self {
         Self {
@@ -211,10 +217,7 @@ impl ConfidenceAnalyzer {
         detector: &mut GlinerDetector,
         ground_truth: &GroundTruth,
     ) -> ConfidenceAnalysisResult {
-        let detected_entities = match detector.detect(&ground_truth.text) {
-            Ok(entities) => entities,
-            Err(_) => Vec::new(),
-        };
+        let detected_entities = detector.detect(&ground_truth.text).unwrap_or_default();
 
         let mut entity_results = Vec::new();
         let mut correct_detections = 0;
@@ -255,13 +258,13 @@ impl ConfidenceAnalyzer {
         }
 
         // Calculate metrics
-        let precision = if detected_entities.len() > 0 {
+        let precision = if !detected_entities.is_empty() {
             correct_detections as f32 / detected_entities.len() as f32
         } else {
             0.0
         };
 
-        let recall = if ground_truth.expected_entities.len() > 0 {
+        let recall = if !ground_truth.expected_entities.is_empty() {
             correct_detections as f32 / ground_truth.expected_entities.len() as f32
         } else {
             0.0
@@ -344,7 +347,7 @@ impl ConfidenceAnalyzer {
         for result in results {
             model_results
                 .entry(result.model_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(result);
         }
 
@@ -358,7 +361,7 @@ impl ConfidenceAnalyzer {
             for result in model_results {
                 threshold_groups
                     .entry(format!("{:.1}", result.threshold))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(result);
             }
 
@@ -450,7 +453,7 @@ impl ConfidenceAnalyzer {
             for result in &threshold_results {
                 model_groups
                     .entry(result.model_name.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(result);
             }
 

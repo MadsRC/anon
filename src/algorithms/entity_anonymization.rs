@@ -1,11 +1,12 @@
 use super::AnonymizationAlgorithm;
+use super::traits::EntityAnonymizationStrategy;
 use crate::detection::{DetectedEntity, EntityDetector, EntityType};
 use crate::{AnonError, Dataset, Result};
 use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::collections::{HashMap, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
 pub struct EntityAnonymization {
@@ -69,6 +70,12 @@ pub struct PseudonymPools {
     pub organizations: Option<Vec<String>>,
     pub locations: Option<Vec<String>>,
     pub email_domains: Option<Vec<String>>,
+}
+
+impl Default for PseudonymPools {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PseudonymPools {
@@ -220,6 +227,12 @@ impl PseudonymPools {
         let tld_idx = (rng.next_u32() as usize + index * 6) % tlds.len();
 
         format!("{}{:03}{}", names[name_idx], index, tlds[tld_idx])
+    }
+}
+
+impl Default for EntityAnonymization {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -376,9 +389,7 @@ impl EntityAnonymization {
         let mut offset = 0i32;
 
         for entity in &all_entities {
-            let strategy = self.get_strategy_for_entity(entity);
-
-            let replacement = self.generate_replacement(entity, &strategy)?;
+            let replacement = self.generate_replacement(entity)?;
             let adjusted_start = (entity.start as i32 + offset) as usize;
             let adjusted_end = (entity.end as i32 + offset) as usize;
 
@@ -391,407 +402,60 @@ impl EntityAnonymization {
         Ok(result)
     }
 
-    fn generate_replacement(
-        &mut self,
-        entity: &DetectedEntity,
-        strategy: &ReplacementStrategy,
-    ) -> Result<String> {
+    pub fn generate_replacement(&mut self, entity: &DetectedEntity) -> Result<String> {
+        let strategy = self.get_strategy_for_entity(entity);
+
         match strategy {
-            ReplacementStrategy::Suppress(replacement) => Ok(replacement.clone()),
-            ReplacementStrategy::Generalize(category) => Ok(format!("[{}]", category)),
-            ReplacementStrategy::Redact => {
-                if self.preserve_format {
-                    Ok(self.generate_format_preserving_replacement(entity))
-                } else {
-                    Ok("[REDACTED]".to_string())
+            ReplacementStrategy::Redact => Ok(entity.entity_type.redact(&entity.text)),
+            ReplacementStrategy::Suppress(custom_format) => Ok(custom_format),
+            ReplacementStrategy::Generalize(custom_format) => Ok(format!("[{}]", custom_format)),
+            ReplacementStrategy::Pseudonymize => {
+                // Check if we already have a pseudonym for this original value
+                let original_text = &entity.text;
+                if let Some(existing_pseudonym) = self.pseudonym_mappings.get(original_text) {
+                    return Ok(existing_pseudonym.clone());
                 }
+
+                // Some entity types don't need pools (IP addresses, SSNs, credit cards, phones)
+                let pools = match entity.entity_type {
+                    EntityType::IpAddress
+                    | EntityType::PhoneNumber
+                    | EntityType::SocialSecurityNumber
+                    | EntityType::CreditCard => {
+                        // Create empty pools for entities that don't need them
+                        PseudonymPools::new()
+                    }
+                    _ => self.get_pools()?.clone(),
+                };
+                let mut rng = self.create_deterministic_rng(&entity.text, &entity.entity_type);
+                let pseudonym = entity
+                    .entity_type
+                    .pseudonymize(&entity.text, &mut rng, &pools)?;
+
+                // Store mappings for consistency and reversibility
+                self.pseudonym_mappings
+                    .insert(original_text.clone(), pseudonym.clone());
+                self.reverse_mappings
+                    .insert(pseudonym.clone(), original_text.clone());
+
+                Ok(pseudonym)
             }
-            ReplacementStrategy::Pseudonymize => Ok(self.generate_pseudonym(entity)?),
         }
     }
 
-    fn generate_format_preserving_replacement(&self, entity: &DetectedEntity) -> String {
-        match entity.entity_type {
-            EntityType::Email => {
-                if let Some(at_pos) = entity.text.find('@') {
-                    let (local_part, domain_part) = entity.text.split_at(at_pos);
-                    format!("{}@{}", "*".repeat(local_part.len()), &domain_part[1..])
-                } else {
-                    "*".repeat(entity.text.len())
-                }
-            }
-            EntityType::PhoneNumber => entity
-                .text
-                .chars()
-                .map(|c| if c.is_ascii_digit() { '*' } else { c })
-                .collect(),
-            EntityType::SocialSecurityNumber => entity
-                .text
-                .chars()
-                .map(|c| if c.is_ascii_digit() { '*' } else { c })
-                .collect(),
-            EntityType::CreditCard => {
-                let digits: String = entity.text.chars().filter(|c| c.is_ascii_digit()).collect();
-                if digits.len() >= 4 {
-                    format!("****-****-****-{}", &digits[digits.len() - 4..])
-                } else {
-                    "*".repeat(entity.text.len())
-                }
-            }
-            EntityType::Person => {
-                // For names, preserve structure (First Last -> ***** ****)
-                if entity.text.contains(' ') {
-                    entity
-                        .text
-                        .split_whitespace()
-                        .map(|word| "*".repeat(word.len()))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                } else {
-                    "*".repeat(entity.text.len())
-                }
-            }
-            EntityType::Organization => {
-                // For organizations, keep some structure
-                "*".repeat(entity.text.len().min(10)) + " Corp"
-            }
-            EntityType::Location => {
-                // For locations, just mask
-                "*".repeat(entity.text.len())
-            }
-            _ => "*".repeat(entity.text.len()),
-        }
-    }
-
-    fn generate_pseudonym(&mut self, entity: &DetectedEntity) -> Result<String> {
-        // Check if we already have a pseudonym for this original value
-        let original_text = &entity.text;
-        if let Some(existing_pseudonym) = self.pseudonym_mappings.get(original_text) {
-            return Ok(existing_pseudonym.clone());
-        }
-
+    fn create_deterministic_rng(&self, text: &str, entity_type: &EntityType) -> StdRng {
         // Create deterministic RNG from seed + original text hash
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
 
         // Combine seed (if set) with the original text for deterministic generation
         if let Some(seed) = self.seed {
             seed.hash(&mut hasher);
         }
-        original_text.hash(&mut hasher);
-        entity.entity_type.hash(&mut hasher);
+        text.hash(&mut hasher);
+        entity_type.hash(&mut hasher);
 
         let deterministic_seed = hasher.finish();
-        let mut rng = StdRng::seed_from_u64(deterministic_seed);
-
-        // Get pools if needed (not required for IP addresses which use algorithmic generation)
-        let pools = if entity.entity_type == EntityType::IpAddress
-            || entity.entity_type == EntityType::PhoneNumber
-            || entity.entity_type == EntityType::SocialSecurityNumber
-            || entity.entity_type == EntityType::CreditCard
-        {
-            None
-        } else {
-            Some(self.get_pools()?)
-        };
-
-        let pseudonym = match entity.entity_type {
-            EntityType::Person => {
-                let pools = pools.as_ref().unwrap();
-                let first_names = pools.first_names.as_ref().ok_or_else(|| {
-                    AnonError::InvalidInput("No first names pool provided".to_string())
-                })?;
-                let last_names = pools.last_names.as_ref().ok_or_else(|| {
-                    AnonError::InvalidInput("No last names pool provided".to_string())
-                })?;
-
-                if first_names.is_empty() || last_names.is_empty() {
-                    return Err(AnonError::InvalidInput(
-                        "Empty name pools provided".to_string(),
-                    ));
-                }
-
-                format!(
-                    "{} {}",
-                    first_names[rng.gen_range(0..first_names.len())],
-                    last_names[rng.gen_range(0..last_names.len())]
-                )
-            }
-            EntityType::Email => {
-                let pools = pools.as_ref().unwrap();
-                let domains = pools.email_domains.as_ref().ok_or_else(|| {
-                    AnonError::InvalidInput("No email domains pool provided".to_string())
-                })?;
-
-                if domains.is_empty() {
-                    return Err(AnonError::InvalidInput(
-                        "Empty email domains pool provided".to_string(),
-                    ));
-                }
-
-                format!(
-                    "user{}@{}",
-                    rng.gen_range(1000..9999),
-                    domains[rng.gen_range(0..domains.len())]
-                )
-            }
-            EntityType::PhoneNumber => {
-                // Phone numbers don't need pools - use algorithmic generation
-                format!(
-                    "555-{:03}-{:04}",
-                    rng.gen_range(100..999),
-                    rng.gen_range(1000..9999)
-                )
-            }
-            EntityType::Organization => {
-                let pools = pools.as_ref().unwrap();
-                let organizations = pools.organizations.as_ref().ok_or_else(|| {
-                    AnonError::InvalidInput("No organizations pool provided".to_string())
-                })?;
-
-                if organizations.is_empty() {
-                    return Err(AnonError::InvalidInput(
-                        "Empty organizations pool provided".to_string(),
-                    ));
-                }
-
-                organizations[rng.gen_range(0..organizations.len())].clone()
-            }
-            EntityType::Location => {
-                let pools = pools.as_ref().unwrap();
-                let locations = pools.locations.as_ref().ok_or_else(|| {
-                    AnonError::InvalidInput("No locations pool provided".to_string())
-                })?;
-
-                if locations.is_empty() {
-                    return Err(AnonError::InvalidInput(
-                        "Empty locations pool provided".to_string(),
-                    ));
-                }
-
-                locations[rng.gen_range(0..locations.len())].clone()
-            }
-            EntityType::SocialSecurityNumber => {
-                // SSN doesn't need pools - use algorithmic generation
-                format!(
-                    "{:03}-{:02}-{:04}",
-                    rng.gen_range(100..999),
-                    rng.gen_range(10..99),
-                    rng.gen_range(1000..9999)
-                )
-            }
-            EntityType::CreditCard => {
-                // Credit cards don't need pools - use algorithmic generation
-                format!("****-****-****-{:04}", rng.gen_range(1000..9999))
-            }
-            EntityType::IpAddress => {
-                // IP addresses use algorithmic generation with class preservation
-                self.generate_class_preserving_ip_pseudonym(original_text, &mut rng)?
-            }
-            _ => format!("[PSEUDO_{}]", entity.entity_type),
-        };
-
-        // Store mappings for consistency and reversibility
-        self.pseudonym_mappings
-            .insert(original_text.clone(), pseudonym.clone());
-        self.reverse_mappings
-            .insert(pseudonym.clone(), original_text.clone());
-
-        Ok(pseudonym)
-    }
-
-    fn generate_class_preserving_ip_pseudonym(
-        &self,
-        original_ip: &str,
-        rng: &mut StdRng,
-    ) -> Result<String> {
-        // Check if it's CIDR notation first
-        if let Some(slash_pos) = original_ip.find('/') {
-            let (ip_part, prefix_part) = original_ip.split_at(slash_pos);
-            let prefix_str = &prefix_part[1..]; // Skip the '/' character
-            
-            // Validate and preserve prefix length
-            let prefix_len = prefix_str.parse::<u8>().map_err(|_| {
-                AnonError::InvalidInput(format!(
-                    "Invalid CIDR prefix length: {}",
-                    prefix_str
-                ))
-            })?;
-            
-            // Generate pseudonym for the IP part
-            let pseudo_ip = if let Ok(ipv4) = ip_part.parse::<Ipv4Addr>() {
-                // Validate IPv4 prefix length
-                if prefix_len > 32 {
-                    return Err(AnonError::InvalidInput(format!(
-                        "Invalid IPv4 prefix length: /{}",
-                        prefix_len
-                    )));
-                }
-                self.generate_ipv4_pseudonym(ipv4, rng)
-            } else if let Ok(ipv6) = ip_part.parse::<Ipv6Addr>() {
-                // Validate IPv6 prefix length
-                if prefix_len > 128 {
-                    return Err(AnonError::InvalidInput(format!(
-                        "Invalid IPv6 prefix length: /{}",
-                        prefix_len
-                    )));
-                }
-                self.generate_ipv6_pseudonym(ipv6, rng)
-            } else {
-                return Err(AnonError::InvalidInput(format!(
-                    "Invalid IP address in CIDR: {}",
-                    ip_part
-                )));
-            };
-            
-            // Combine pseudonym IP with original prefix
-            return Ok(format!("{}/{}", pseudo_ip, prefix_len));
-        }
-        
-        // Not CIDR, handle as regular IP
-        // Try parsing as IPv4 first
-        if let Ok(ipv4) = original_ip.parse::<Ipv4Addr>() {
-            return Ok(self.generate_ipv4_pseudonym(ipv4, rng));
-        }
-
-        // Try parsing as IPv6
-        if let Ok(ipv6) = original_ip.parse::<Ipv6Addr>() {
-            return Ok(self.generate_ipv6_pseudonym(ipv6, rng));
-        }
-
-        // Fallback for invalid IP addresses
-        Err(AnonError::InvalidInput(format!(
-            "Invalid IP address format: {}",
-            original_ip
-        )))
-    }
-
-    fn generate_ipv4_pseudonym(&self, original: Ipv4Addr, rng: &mut StdRng) -> String {
-        let octets = original.octets();
-
-        // Classify the IPv4 address and generate pseudonym preserving the class
-        if original.is_loopback() {
-            // Loopback: 127.x.x.x
-            format!(
-                "127.{}.{}.{}",
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(1..=255)
-            )
-        } else if self.is_ipv4_private(octets) {
-            // Private address - preserve private class
-            let class = rng.gen_range(0..3);
-            match class {
-                0 => format!(
-                    "192.168.{}.{}",
-                    rng.gen_range(0..=255),
-                    rng.gen_range(1..=254)
-                ),
-                1 => format!(
-                    "10.{}.{}.{}",
-                    rng.gen_range(0..=255),
-                    rng.gen_range(0..=255),
-                    rng.gen_range(1..=254)
-                ),
-                _ => format!(
-                    "172.{}.{}.{}",
-                    rng.gen_range(16..=31),
-                    rng.gen_range(0..=255),
-                    rng.gen_range(1..=254)
-                ),
-            }
-        } else {
-            // Public address - generate public address
-            loop {
-                let a = rng.gen_range(1..=223); // Avoid Class D (224-239) and Class E (240-255)
-                let b = rng.gen_range(0..=255);
-                let c = rng.gen_range(0..=255);
-                let d = rng.gen_range(1..=254);
-
-                let candidate = [a as u8, b as u8, c as u8, d as u8];
-
-                // Ensure it's not private or loopback
-                if !self.is_ipv4_private(candidate) && a != 127 {
-                    return format!("{}.{}.{}.{}", a, b, c, d);
-                }
-            }
-        }
-    }
-
-    fn generate_ipv6_pseudonym(&self, original: Ipv6Addr, rng: &mut StdRng) -> String {
-        let segments = original.segments();
-
-        if original.is_loopback() {
-            // IPv6 loopback should remain ::1
-            "::1".to_string()
-        } else if original.is_unspecified() {
-            // IPv6 unspecified should remain ::
-            "::".to_string()
-        } else if self.is_ipv6_link_local(segments) {
-            // Link-local: fe80::/10
-            format!(
-                "fe80::{:x}:{:x}:{:x}:{:x}",
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(1..=0xffff)
-            )
-        } else if self.is_ipv6_documentation(segments) {
-            // Documentation prefix: 2001:db8::/32
-            format!(
-                "2001:db8::{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(1..=0xffff)
-            )
-        } else if self.is_ipv4_mapped_ipv6(segments) {
-            // IPv4-mapped IPv6: ::ffff:x.x.x.x
-            let ipv4_part = format!(
-                "{}.{}.{}.{}",
-                rng.gen_range(1..=254),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(1..=254)
-            );
-            format!("::ffff:{}", ipv4_part)
-        } else {
-            // Global unicast - generate random global unicast address
-            format!(
-                "{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
-                rng.gen_range(0x2000..=0x3fff), // Global unicast range
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(0..=0xffff),
-                rng.gen_range(1..=0xffff)
-            )
-        }
-    }
-
-    fn is_ipv4_private(&self, octets: [u8; 4]) -> bool {
-        match octets[0] {
-            10 => true,                                    // 10.0.0.0/8
-            172 if (16..=31).contains(&octets[1]) => true, // 172.16.0.0/12
-            192 if octets[1] == 168 => true,               // 192.168.0.0/16
-            _ => false,
-        }
-    }
-
-    fn is_ipv6_link_local(&self, segments: [u16; 8]) -> bool {
-        (segments[0] & 0xffc0) == 0xfe80 // fe80::/10
-    }
-
-    fn is_ipv6_documentation(&self, segments: [u16; 8]) -> bool {
-        segments[0] == 0x2001 && segments[1] == 0x0db8 // 2001:db8::/32
-    }
-
-    fn is_ipv4_mapped_ipv6(&self, segments: [u16; 8]) -> bool {
-        segments[0..5] == [0, 0, 0, 0, 0] && segments[5] == 0xffff // ::ffff:0:0/96
+        StdRng::seed_from_u64(deterministic_seed)
     }
 }
 
@@ -836,8 +500,7 @@ mod tests {
 
         let entity = DetectedEntity::new(EntityType::Person, "John Doe".to_string(), 0, 8, 0.9);
 
-        let strategy = &ReplacementStrategy::Pseudonymize;
-        let result = anonymizer.generate_replacement(&entity, strategy).unwrap();
+        let result = anonymizer.generate_replacement(&entity).unwrap();
 
         assert!(result.contains(" "), "Pseudonym should contain a space");
         assert_ne!(
@@ -872,8 +535,7 @@ mod tests {
                 1.0,
             );
 
-            let strategy = &ReplacementStrategy::Pseudonymize;
-            let pseudonym = anonymizer.generate_replacement(&entity, strategy).unwrap();
+            let pseudonym = anonymizer.generate_replacement(&entity).unwrap();
 
             // Verify pseudonym is different from original
             assert_ne!(
@@ -938,7 +600,7 @@ mod tests {
             }
 
             // Verify consistency - same input should produce same output
-            let second_pseudonym = anonymizer.generate_replacement(&entity, strategy).unwrap();
+            let second_pseudonym = anonymizer.generate_replacement(&entity).unwrap();
             assert_eq!(
                 pseudonym, second_pseudonym,
                 "Pseudonymization should be deterministic"
@@ -970,8 +632,7 @@ mod tests {
                 1.0,
             );
 
-            let strategy = &ReplacementStrategy::Pseudonymize;
-            let pseudonym = anonymizer.generate_replacement(&entity, strategy).unwrap();
+            let pseudonym = anonymizer.generate_replacement(&entity).unwrap();
 
             // Verify pseudonym behavior based on special cases
             match ip_class {
@@ -1047,19 +708,51 @@ mod tests {
     }
 
     #[test]
+    fn test_new_text_anonymization() {
+        let mut anonymizer = EntityAnonymization::new();
+
+        anonymizer.add_replacement_strategy(EntityType::Email, ReplacementStrategy::Redact);
+
+        let mut detector = PatternDetector::new().unwrap();
+        let text = "Contact John at john.doe@example.com for more info.";
+
+        let result = anonymizer.anonymize_text(text, &mut detector).unwrap();
+        assert!(result.contains("*****@example.com"));
+    }
+
+    #[test]
+    fn test_new_pseudonymization() {
+        let pools = PseudonymPools::generate_with_seed(42, 50);
+        let mut anonymizer = EntityAnonymization::new().with_pools(pools);
+
+        anonymizer.add_replacement_strategy(EntityType::Person, ReplacementStrategy::Pseudonymize);
+
+        let entity = DetectedEntity::new(EntityType::Person, "John Doe".to_string(), 0, 8, 0.9);
+
+        let result = anonymizer.generate_replacement(&entity).unwrap();
+
+        assert!(result.contains(" "), "Pseudonym should contain a space");
+        assert_ne!(
+            result, "John Doe",
+            "Pseudonym should be different from original"
+        );
+        assert!(!result.is_empty(), "Pseudonym should not be empty");
+    }
+
+    #[test]
     fn test_cidr_pseudonymization_semantic_preservation() {
         let mut anonymizer = EntityAnonymization::new();
         anonymizer.set_seed(42);
-        anonymizer.add_replacement_strategy(EntityType::IpAddress, ReplacementStrategy::Pseudonymize);
+        anonymizer
+            .add_replacement_strategy(EntityType::IpAddress, ReplacementStrategy::Pseudonymize);
 
         let test_cases = vec![
             // IPv4 CIDR blocks
-            ("192.168.1.0/24", "private", 24),      // Private /24 network
-            ("10.0.0.0/8", "private", 8),           // Private /8 network
-            ("172.16.0.0/12", "private", 12),       // Private /12 network
-            ("8.8.8.0/24", "public", 24),           // Public /24 network
-            ("127.0.0.0/8", "loopback", 8),         // Loopback /8 network
-            
+            ("192.168.1.0/24", "private", 24), // Private /24 network
+            ("10.0.0.0/8", "private", 8),      // Private /8 network
+            ("172.16.0.0/12", "private", 12),  // Private /12 network
+            ("8.8.8.0/24", "public", 24),      // Public /24 network
+            ("127.0.0.0/8", "loopback", 8),    // Loopback /8 network
             // IPv6 CIDR blocks
             ("2001:db8::/32", "documentation", 32), // Documentation /32 network
             ("fe80::/10", "link_local", 10),        // Link-local /10 network
@@ -1076,28 +769,37 @@ mod tests {
                 1.0,
             );
 
-            let strategy = &ReplacementStrategy::Pseudonymize;
-            let pseudonym = anonymizer.generate_replacement(&entity, strategy).unwrap();
+            let pseudonym = anonymizer.generate_replacement(&entity).unwrap();
 
             // Verify pseudonym is different from original (except special cases)
             match ip_class {
                 "loopback" => {
                     if original_cidr == "::1/128" {
-                        assert_eq!(pseudonym, "::1/128", 
-                            "IPv6 loopback host route should remain unchanged");
+                        assert_eq!(
+                            pseudonym, "::1/128",
+                            "IPv6 loopback host route should remain unchanged"
+                        );
                     } else {
                         // IPv4 loopback should stay in 127.x.x.x range with same prefix
-                        assert!(pseudonym.starts_with("127."), 
-                            "Loopback CIDR {} should remain in 127.x.x.x range, got {}", 
-                            original_cidr, pseudonym);
-                        assert!(pseudonym.ends_with(&format!("/{}", expected_prefix)),
-                            "Prefix length should be preserved: expected /{}, got {}", 
-                            expected_prefix, pseudonym);
+                        assert!(
+                            pseudonym.starts_with("127."),
+                            "Loopback CIDR {} should remain in 127.x.x.x range, got {}",
+                            original_cidr,
+                            pseudonym
+                        );
+                        assert!(
+                            pseudonym.ends_with(&format!("/{}", expected_prefix)),
+                            "Prefix length should be preserved: expected /{}, got {}",
+                            expected_prefix,
+                            pseudonym
+                        );
                     }
                 }
                 _ => {
-                    assert_ne!(pseudonym, original_cidr, 
-                        "CIDR pseudonym should differ from original");
+                    assert_ne!(
+                        pseudonym, original_cidr,
+                        "CIDR pseudonym should differ from original"
+                    );
                 }
             }
 
@@ -1106,76 +808,102 @@ mod tests {
                 let (_, prefix_part) = pseudonym.split_at(slash_pos);
                 let prefix_str = &prefix_part[1..];
                 let actual_prefix: u8 = prefix_str.parse().expect("Prefix should be valid number");
-                
-                assert_eq!(actual_prefix, expected_prefix, 
-                    "Prefix length should be preserved: expected /{}, got /{} in {}", 
-                    expected_prefix, actual_prefix, pseudonym);
+
+                assert_eq!(
+                    actual_prefix, expected_prefix,
+                    "Prefix length should be preserved: expected /{}, got /{} in {}",
+                    expected_prefix, actual_prefix, pseudonym
+                );
             } else {
-                panic!("Pseudonym should preserve CIDR format: got '{}' for '{}'", 
-                    pseudonym, original_cidr);
+                panic!(
+                    "Pseudonym should preserve CIDR format: got '{}' for '{}'",
+                    pseudonym, original_cidr
+                );
             }
 
             // Verify IP class preservation
             let (pseudo_ip_part, _) = pseudonym.split_at(pseudonym.find('/').unwrap());
-            
+
             match ip_class {
                 "private" => {
-                    let is_private = pseudo_ip_part.starts_with("192.168.") ||
-                                   pseudo_ip_part.starts_with("10.") ||
-                                   (pseudo_ip_part.starts_with("172.") && {
-                                       let parts: Vec<&str> = pseudo_ip_part.split('.').collect();
-                                       if parts.len() >= 2 {
-                                           if let Ok(second_octet) = parts[1].parse::<u8>() {
-                                               (16..=31).contains(&second_octet)
-                                           } else { false }
-                                       } else { false }
-                                   });
-                    assert!(is_private, 
-                        "Private CIDR {} should remain private, got {}", 
-                        original_cidr, pseudonym);
+                    let is_private = pseudo_ip_part.starts_with("192.168.")
+                        || pseudo_ip_part.starts_with("10.")
+                        || (pseudo_ip_part.starts_with("172.") && {
+                            let parts: Vec<&str> = pseudo_ip_part.split('.').collect();
+                            if parts.len() >= 2 {
+                                if let Ok(second_octet) = parts[1].parse::<u8>() {
+                                    (16..=31).contains(&second_octet)
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        });
+                    assert!(
+                        is_private,
+                        "Private CIDR {} should remain private, got {}",
+                        original_cidr, pseudonym
+                    );
                 }
                 "public" => {
-                    let is_public = !pseudo_ip_part.starts_with("127.") &&
-                                  !pseudo_ip_part.starts_with("192.168.") &&
-                                  !pseudo_ip_part.starts_with("10.") &&
-                                  !(pseudo_ip_part.starts_with("172.") && {
-                                      let parts: Vec<&str> = pseudo_ip_part.split('.').collect();
-                                      if parts.len() >= 2 {
-                                          if let Ok(second_octet) = parts[1].parse::<u8>() {
-                                              (16..=31).contains(&second_octet)
-                                          } else { false }
-                                      } else { false }
-                                  });
-                    assert!(is_public, 
-                        "Public CIDR {} should remain public, got {}", 
-                        original_cidr, pseudonym);
+                    let is_public = !pseudo_ip_part.starts_with("127.")
+                        && !pseudo_ip_part.starts_with("192.168.")
+                        && !pseudo_ip_part.starts_with("10.")
+                        && !(pseudo_ip_part.starts_with("172.") && {
+                            let parts: Vec<&str> = pseudo_ip_part.split('.').collect();
+                            if parts.len() >= 2 {
+                                if let Ok(second_octet) = parts[1].parse::<u8>() {
+                                    (16..=31).contains(&second_octet)
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        });
+                    assert!(
+                        is_public,
+                        "Public CIDR {} should remain public, got {}",
+                        original_cidr, pseudonym
+                    );
                 }
                 "documentation" => {
-                    assert!(pseudo_ip_part.starts_with("2001:db8"), 
-                        "Documentation CIDR {} should remain in 2001:db8:: range, got {}", 
-                        original_cidr, pseudonym);
+                    assert!(
+                        pseudo_ip_part.starts_with("2001:db8"),
+                        "Documentation CIDR {} should remain in 2001:db8:: range, got {}",
+                        original_cidr,
+                        pseudonym
+                    );
                 }
                 "link_local" => {
-                    assert!(pseudo_ip_part.starts_with("fe80"), 
-                        "Link-local CIDR {} should remain in fe80:: range, got {}", 
-                        original_cidr, pseudonym);
+                    assert!(
+                        pseudo_ip_part.starts_with("fe80"),
+                        "Link-local CIDR {} should remain in fe80:: range, got {}",
+                        original_cidr,
+                        pseudonym
+                    );
                 }
                 "global" => {
-                    let is_global = !pseudo_ip_part.starts_with("::1") &&
-                                  !pseudo_ip_part.starts_with("fe80") &&
-                                  !pseudo_ip_part.starts_with("2001:db8") &&
-                                  !pseudo_ip_part.starts_with("::ffff:");
-                    assert!(is_global, 
-                        "Global CIDR {} should remain global, got {}", 
-                        original_cidr, pseudonym);
+                    let is_global = !pseudo_ip_part.starts_with("::1")
+                        && !pseudo_ip_part.starts_with("fe80")
+                        && !pseudo_ip_part.starts_with("2001:db8")
+                        && !pseudo_ip_part.starts_with("::ffff:");
+                    assert!(
+                        is_global,
+                        "Global CIDR {} should remain global, got {}",
+                        original_cidr, pseudonym
+                    );
                 }
                 _ => {}
             }
 
             // Verify consistency
-            let second_pseudonym = anonymizer.generate_replacement(&entity, strategy).unwrap();
-            assert_eq!(pseudonym, second_pseudonym, 
-                "CIDR pseudonymization should be deterministic");
+            let second_pseudonym = anonymizer.generate_replacement(&entity).unwrap();
+            assert_eq!(
+                pseudonym, second_pseudonym,
+                "CIDR pseudonymization should be deterministic"
+            );
         }
     }
 }

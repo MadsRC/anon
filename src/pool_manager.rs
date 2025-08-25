@@ -1,9 +1,9 @@
 use crate::algorithms::entity_anonymization::PseudonymPools;
 use crate::{AnonError, Result};
 use chrono::{DateTime, Utc};
+use rand::random;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use rand::random;
 
 #[derive(Serialize, Deserialize)]
 pub struct PoolFile {
@@ -217,7 +217,7 @@ impl PoolManager {
     }
 
     /// Get or generate a persistent seed for anonymization
-    /// 
+    ///
     /// This function:
     /// 1. Returns explicit seed if provided
     /// 2. Returns existing persisted seed if available
@@ -239,7 +239,7 @@ impl PoolManager {
 
         // Generate new cryptographically secure random seed
         let new_seed = random::<u64>();
-        
+
         // Save the seed for future use
         std::fs::write(&seed_file, new_seed.to_string()).map_err(|e| {
             AnonError::InvalidInput(format!(

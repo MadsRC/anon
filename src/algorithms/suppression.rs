@@ -31,8 +31,8 @@ impl AnonymizationAlgorithm for Suppression {
         // Apply suppression to specified columns using suppression_char
         for column in &self.columns {
             if let Some(col_data) = anonymized.get_column_mut(column) {
-                for i in 0..col_data.len() {
-                    col_data[i] = self.suppression_char.repeat(col_data[i].len());
+                for item in col_data {
+                    *item = self.suppression_char.repeat(item.len());
                 }
             }
         }

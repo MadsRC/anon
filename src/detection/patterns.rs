@@ -54,32 +54,32 @@ impl PatternDetector {
         if let Some(slash_pos) = text.find('/') {
             let (ip_part, prefix_part) = text.split_at(slash_pos);
             let prefix_str = &prefix_part[1..]; // Skip the '/' character
-            
+
             // Validate prefix length
             if let Ok(prefix_len) = prefix_str.parse::<u8>() {
                 // Check if it's IPv4 CIDR
-                if let Ok(_) = ip_part.parse::<Ipv4Addr>() {
+                if ip_part.parse::<Ipv4Addr>().is_ok() {
                     return prefix_len <= 32;
                 }
-                
-                // Check if it's IPv6 CIDR  
-                if let Ok(_) = ip_part.parse::<Ipv6Addr>() {
+
+                // Check if it's IPv6 CIDR
+                if ip_part.parse::<Ipv6Addr>().is_ok() {
                     return prefix_len <= 128;
                 }
             }
-            
+
             // Invalid CIDR format
             return false;
         }
-        
+
         // Not CIDR, try parsing as regular IP
         // Try parsing as IPv4 first
-        if let Ok(_) = text.parse::<Ipv4Addr>() {
+        if text.parse::<Ipv4Addr>().is_ok() {
             return true;
         }
 
         // Try parsing as IPv6
-        if let Ok(_) = text.parse::<Ipv6Addr>() {
+        if text.parse::<Ipv6Addr>().is_ok() {
             return true;
         }
 
@@ -383,26 +383,24 @@ mod tests {
     #[test]
     fn test_cidr_notation_detection() {
         let mut detector = PatternDetector::new().unwrap();
-        
+
         let test_cases = vec![
             // IPv4 CIDR blocks
-            ("192.168.1.0/24", true),    // Standard private network
-            ("10.0.0.0/8", true),        // Large private network  
-            ("172.16.0.0/12", true),     // Private network range
-            ("8.8.8.0/24", true),        // Public network
-            ("127.0.0.0/8", true),       // Loopback network
-            
+            ("192.168.1.0/24", true), // Standard private network
+            ("10.0.0.0/8", true),     // Large private network
+            ("172.16.0.0/12", true),  // Private network range
+            ("8.8.8.0/24", true),     // Public network
+            ("127.0.0.0/8", true),    // Loopback network
             // IPv6 CIDR blocks
-            ("2001:db8::/32", true),     // Documentation network
-            ("fe80::/10", true),         // Link-local network
-            ("::1/128", true),           // Loopback host route
-            ("2001:4860::/32", true),    // Global unicast network
-            
+            ("2001:db8::/32", true),  // Documentation network
+            ("fe80::/10", true),      // Link-local network
+            ("::1/128", true),        // Loopback host route
+            ("2001:4860::/32", true), // Global unicast network
             // Invalid CIDR blocks
-            ("192.168.1.0/33", false),  // Invalid IPv4 prefix length
-            ("192.168.1.0/-1", false),  // Negative prefix
-            ("192.168.1.0/", false),    // Missing prefix length
-            ("2001:db8::/129", false),  // Invalid IPv6 prefix length
+            ("192.168.1.0/33", false), // Invalid IPv4 prefix length
+            ("192.168.1.0/-1", false), // Negative prefix
+            ("192.168.1.0/", false),   // Missing prefix length
+            ("2001:db8::/129", false), // Invalid IPv6 prefix length
         ];
 
         for (cidr, should_detect) in test_cases {

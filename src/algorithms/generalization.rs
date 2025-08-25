@@ -7,6 +7,12 @@ pub struct Generalization {
     hierarchies: HashMap<String, Vec<Vec<String>>>,
 }
 
+impl Default for Generalization {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Generalization {
     pub fn new() -> Self {
         Self {

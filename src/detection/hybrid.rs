@@ -16,9 +16,9 @@ impl HybridDetector {
         let pattern_detector = PatternDetector::new()?;
 
         // Try to initialize NER detector, but don't fail if models are missing
-        let ner_detector = match GlinerDetector::new(
-            "models/gliner/gliner_small-v2.1/tokenizer.json",
-            "models/gliner/gliner_small-v2.1/model.onnx",
+        let ner_detector = GlinerDetector::new(
+            "models/gliner/gliner-x-small/tokenizer.json",
+            "models/gliner/gliner-x-small/model.onnx",
             vec![
                 EntityType::Person,
                 EntityType::Organization,
@@ -26,10 +26,8 @@ impl HybridDetector {
                 EntityType::Email,
                 EntityType::IpAddress,
             ],
-        ) {
-            Ok(detector) => Some(detector),
-            Err(_) => None,
-        };
+        )
+        .ok();
 
         Ok(Self {
             pattern_detector,
@@ -46,10 +44,7 @@ impl HybridDetector {
     ) -> Result<Self> {
         let pattern_detector = PatternDetector::new()?;
 
-        let ner_detector = match GlinerDetector::new(tokenizer_path, model_path, entity_types) {
-            Ok(detector) => Some(detector),
-            Err(_) => None,
-        };
+        let ner_detector = GlinerDetector::new(tokenizer_path, model_path, entity_types).ok();
 
         Ok(Self {
             pattern_detector,
@@ -114,10 +109,7 @@ impl HybridDetector {
                     self.debug_log(&format!(
                         "NER found {} IP address candidates: {:?}",
                         ner_ips.len(),
-                        ner_ips
-                            .iter()
-                            .map(|e| &e.text)
-                            .collect::<Vec<_>>()
+                        ner_ips.iter().map(|e| &e.text).collect::<Vec<_>>()
                     ));
 
                     // Find IP addresses that NER detected but pattern missed
@@ -129,9 +121,9 @@ impl HybridDetector {
 
                     for ner_ip in ner_ips {
                         // Check if this NER IP overlaps with any pattern-detected IP
-                        let overlaps_with_pattern = pattern_ip_spans.iter().any(|(start, end)| {
-                            ner_ip.start < *end && ner_ip.end > *start
-                        });
+                        let overlaps_with_pattern = pattern_ip_spans
+                            .iter()
+                            .any(|(start, end)| ner_ip.start < *end && ner_ip.end > *start);
 
                         if !overlaps_with_pattern {
                             // NER found an IP that pattern missed - this is our enhancement!
@@ -367,18 +359,17 @@ mod tests {
             // Cases where pattern should work (baseline)
             ("Standard IP", "Server IP: 192.168.1.1", 1),
             ("CIDR block", "Network: 192.168.1.0/24", 1),
-            
             // Cases where NER should provide advantage (malformed but semantic)
             ("Wrong separators", "Use IP 192,168,1,1 instead", 1), // NER advantage
-            ("Dashes", "Connect to 192-168-1-1", 1),                // NER advantage  
+            ("Dashes", "Connect to 192-168-1-1", 1),               // NER advantage
             ("Spaces", "IP: 192. 168. 1. 1", 1),                   // NER advantage
             ("Natural language", "My router 192.168.1.1 crashed", 1), // Both should work
-            ("Leading zeros", "Connect to 192.168.001.001", 0),     // May not detect - model limitation
+            ("Leading zeros", "Connect to 192.168.001.001", 1), // NER can detect IPs with leading zeros
         ];
 
         for (test_name, text, expected_ip_count) in test_cases {
             let entities = detector.detect(text).expect("Detection should work");
-            
+
             let ip_entities: Vec<_> = entities
                 .iter()
                 .filter(|e| e.entity_type == EntityType::IpAddress)
@@ -402,7 +393,11 @@ mod tests {
 
             // Optional: Print debug output for analysis
             if detector.debug_enabled {
-                println!("Debug output for '{}':\n{}", text, detector.get_debug_output());
+                println!(
+                    "Debug output for '{}':\n{}",
+                    text,
+                    detector.get_debug_output()
+                );
             }
         }
     }

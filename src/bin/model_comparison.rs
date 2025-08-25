@@ -92,7 +92,7 @@ fn run_accuracy_comparison() {
         for result in &results {
             model_scores
                 .entry(result.model_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(result.f1_score);
         }
 

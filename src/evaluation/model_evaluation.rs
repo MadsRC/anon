@@ -86,6 +86,12 @@ pub struct ModelEvaluator {
     entity_types: Vec<EntityType>,
 }
 
+impl Default for ModelEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelEvaluator {
     pub fn new() -> Self {
         Self {
@@ -164,10 +170,7 @@ impl ModelEvaluator {
     ) -> EvaluationResult {
         let start_time = Instant::now();
 
-        let detected_entities = match detector.detect(&test_case.text) {
-            Ok(entities) => entities,
-            Err(_) => Vec::new(),
-        };
+        let detected_entities = detector.detect(&test_case.text).unwrap_or_default();
 
         let processing_time = start_time.elapsed().as_millis();
 
@@ -290,7 +293,7 @@ impl ModelEvaluator {
         for result in results {
             model_results
                 .entry(result.model_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(result);
         }
 

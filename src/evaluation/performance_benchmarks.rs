@@ -22,6 +22,12 @@ pub struct PerformanceTester {
     models: Vec<(String, String, String)>, // (name, tokenizer_path, model_path)
 }
 
+impl Default for PerformanceTester {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceTester {
     pub fn new() -> Self {
         Self {
@@ -50,7 +56,7 @@ impl PerformanceTester {
     }
 
     fn generate_synthetic_texts(&self, count: usize) -> Vec<String> {
-        let templates = vec![
+        let templates = [
             "Contact {person} at {org} via {email} or call {phone}.",
             "{person} from {org} will be presenting in {location} next week.",
             "The meeting with {person} and {person2} from {org} is scheduled for {location}.",
@@ -61,7 +67,7 @@ impl PerformanceTester {
             "For technical support, contact {person} at {email} or call {phone}.",
         ];
 
-        let people = vec![
+        let people = [
             "John Smith",
             "Sarah Johnson",
             "Michael Chen",
@@ -71,7 +77,7 @@ impl PerformanceTester {
             "James Miller",
             "Anna Garcia",
         ];
-        let orgs = vec![
+        let orgs = [
             "Microsoft",
             "Google",
             "Apple",
@@ -83,7 +89,7 @@ impl PerformanceTester {
             "Stanford University",
             "MIT",
         ];
-        let locations = vec![
+        let locations = [
             "New York",
             "San Francisco",
             "London",
@@ -93,13 +99,13 @@ impl PerformanceTester {
             "Sydney",
             "Singapore",
         ];
-        let emails = vec![
+        let emails = [
             "john.smith@company.com",
             "s.johnson@org.edu",
             "m.chen@tech.co",
             "emily@startup.io",
         ];
-        let phones = vec![
+        let phones = [
             "(555) 123-4567",
             "(650) 555-0123",
             "+1-800-555-9999",
@@ -110,14 +116,14 @@ impl PerformanceTester {
         for i in 0..count {
             let template = &templates[i % templates.len()];
             let text = template
-                .replace("{person}", &people[i % people.len()])
-                .replace("{person2}", &people[(i + 1) % people.len()])
-                .replace("{org}", &orgs[i % orgs.len()])
-                .replace("{org2}", &orgs[(i + 1) % orgs.len()])
-                .replace("{location}", &locations[i % locations.len()])
-                .replace("{email}", &emails[i % emails.len()])
-                .replace("{email2}", &emails[(i + 1) % emails.len()])
-                .replace("{phone}", &phones[i % phones.len()]);
+                .replace("{person}", people[i % people.len()])
+                .replace("{person2}", people[(i + 1) % people.len()])
+                .replace("{org}", orgs[i % orgs.len()])
+                .replace("{org2}", orgs[(i + 1) % orgs.len()])
+                .replace("{location}", locations[i % locations.len()])
+                .replace("{email}", emails[i % emails.len()])
+                .replace("{email2}", emails[(i + 1) % emails.len()])
+                .replace("{phone}", phones[i % phones.len()]);
 
             texts.push(text);
         }
@@ -360,12 +366,9 @@ impl PerformanceTester {
             let mut total_entities = 0;
 
             for text in test_batch {
-                match detector.detect(text) {
-                    Ok(entities) => {
-                        total_chars += text.len();
-                        total_entities += entities.len();
-                    }
-                    Err(_) => {}
+                if let Ok(entities) = detector.detect(text) {
+                    total_chars += text.len();
+                    total_entities += entities.len();
                 }
             }
 
@@ -400,7 +403,7 @@ impl PerformanceTester {
         for result in results {
             model_results
                 .entry(result.model_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(result);
         }
 

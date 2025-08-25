@@ -24,6 +24,12 @@ pub struct Dataset {
     column_types: HashMap<String, DataType>,
 }
 
+impl Default for Dataset {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Dataset {
     pub fn new() -> Self {
         Self {

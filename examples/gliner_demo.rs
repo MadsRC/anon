@@ -1,4 +1,6 @@
-use anon_sdk::algorithms::entity_anonymization::{EntityAnonymization, ReplacementStrategy, PseudonymPools};
+use anon_sdk::algorithms::entity_anonymization::{
+    EntityAnonymization, PseudonymPools, ReplacementStrategy,
+};
 use anon_sdk::detection::{EntityDetector, EntityType, ner::GlinerDetector};
 use std::path::Path;
 
@@ -7,17 +9,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Try local models/ directory first, then fallback to $HOME/.anon/models/
     let local_base = "models/gliner/gliner-x-small";
-    let home_base = format!("{}/.anon/models/gliner/gliner-x-small", 
-        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    let home_base = format!(
+        "{}/.anon/models/gliner/gliner-x-small",
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
+    );
 
-    let (tokenizer_path, model_path) = if Path::new(&format!("{}/tokenizer.json", local_base)).exists() 
-        && Path::new(&format!("{}/model.onnx", local_base)).exists() {
+    let (tokenizer_path, model_path) = if Path::new(&format!("{}/tokenizer.json", local_base))
+        .exists()
+        && Path::new(&format!("{}/model.onnx", local_base)).exists()
+    {
         println!("📍 Using local models from: {}", local_base);
-        (format!("{}/tokenizer.json", local_base), format!("{}/model.onnx", local_base))
-    } else if Path::new(&format!("{}/tokenizer.json", home_base)).exists() 
-        && Path::new(&format!("{}/model.onnx", home_base)).exists() {
+        (
+            format!("{}/tokenizer.json", local_base),
+            format!("{}/model.onnx", local_base),
+        )
+    } else if Path::new(&format!("{}/tokenizer.json", home_base)).exists()
+        && Path::new(&format!("{}/model.onnx", home_base)).exists()
+    {
         println!("📍 Using models from: {}", home_base);
-        (format!("{}/tokenizer.json", home_base), format!("{}/model.onnx", home_base))
+        (
+            format!("{}/tokenizer.json", home_base),
+            format!("{}/model.onnx", home_base),
+        )
     } else {
         return Err("❌ GLiNER models not found. Please run:\n  make download-models\n  mkdir -p $HOME/.anon && cp -r models $HOME/.anon/".into());
     };

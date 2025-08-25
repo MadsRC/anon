@@ -172,12 +172,12 @@ fn process_anonymization(cli: Cli, pool_manager: PoolManager) -> anon_sdk::Resul
 
     // Get or generate persistent seed
     let seed = pool_manager.get_or_generate_seed(cli.seed)?;
-    
+
     // Create anonymizer with pools and seed
     let mut anonymizer = EntityAnonymization::new().with_pools(pools);
     anonymizer.set_global_strategy(cli.strategy);
     anonymizer.set_seed(seed);
-    
+
     if cli.debug {
         if cli.seed.is_some() {
             eprintln!("🔑 Using explicit seed: {}", seed);
